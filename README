@@ -1,24 +1,92 @@
-   ____ ___  ____  ____  ____ _____  ____  ________ 
-  / __ `__ \/ __ \/ __ \/ __ `/ __ \/ __ \/ ___/ _ \
- / / / / / / /_/ / / / / /_/ / /_/ / /_/ (__  )  __/
-/_/ /_/ /_/\____/_/ /_/\__, /\____/\____/____/\___/ 
-                      /____/ by treeform                       
+::
+       ____ ___  ____  ____  ____ _____  ____  ________ 
+      / __ `__ \/ __ \/ __ \/ __ `/ __ \/ __ \/ ___/ _ \
+     / / / / / / /_/ / / / / /_/ / /_/ / /_/ (__  )  __/
+    /_/ /_/ /_/\____/_/ /_/\__, /\____/\____/____/\___/ 
+                          /____/ by treeform                       
 
                       
 Mongoose is a lisp language based on schema and dream-scheme implemintaion.
 
 
--------------------------------------------------------------------------------
+Notes on the Design
+===================
+
+The design for the 'dream' Scheme interpreter began with the design given in Abelson and Sussman's Structure and Interpretation of Computer Programs.
+
+In the following I will use the term 'byte' to refer to 8 bits, 'wyde' to refer to two bytes, 'tetra' to refer to four bytes, and 'octa' to refer to eight bytes.
+
+Garbage Collection
+==================
+
+Two areas of memory of equal size are used for the storage of scheme objects. Both are aligned on an 8-byte boundary. Only one of the two is used at a time by the scheme interpreter; when it becomes full, the garbage collector copies all scheme objects in use to the other memory area (which then becomes the active one). Dynamically allocated scheme objects other than symbols are represented by a discrete number of quad-words which are allocated consecutively within the active memory area.
+
+Scheme Object Types
+===================
+
+The simplest object is the scheme pair which consists of two tetras each of which addresses a scheme object.
+Symbols and statically allocated objects are not garbage-collected, but they must begin on a wyde boundary so that the addresses stored in pairs are always divisible by 2. By virtue of the fact that all scheme objects begin on a wyde boundary, scheme objects other than scheme pairs are differentiated from scheme pairs by storing a tetra which is NOT divisible by 2 in the first tetra of the octa. This tetra represents the type of scheme object. The low byte of this type represents the major type classification used by the procedures boolean?, pair?, procedure?, char?, number?, symbol?, string?, vector?, input-port?, and output-port?. Statically allocated objects are given a type which is negative (sign bit set) so that the garbage collector can easily ignore them. All 256 ascii chars, #t and #f, and the end-of-file object are statically allocated. Only one tetra is necessary for these statically allocated objects. In the case of chars and booleans, the value is stored in the high byte of the low wyde.
+
+::
+    Bit:             0-7        8              9           10-15   16      17         18-30                31
+    Scheme Object    Major Type CDR is scheme? Minor Type          Type Specific Info                      Statically Allocated?
+    NUMBER INTEGER   3          0              0                   Exact?  Negative?  Length in tetras*    0
+           RATIONAL  1          0              0                   Exact?                                  0
+    PORT   OUTPUT    5          0              0                                                           0
+           INPUT     5          0              1                                                           0
+    STRING           7          0              Immutable?  Length in bytes . . . . . . . . . . . . . . . . 0
+    VECTOR           9          1              0           Length in objects . . . . . . . . . . . . . . . 0
+
+* (or 0 if value is stored directly in CDR)
+
+
+
+Symbols are also given a negative type, since they are not garbage collected, but they are dynamically created in a separate memory area devoted to them. Each symbol begins with the tetra type header (on a wyde boundary) which is followed by the bytes of ascii code that form the name of the symbol. A zero byte marks the end of the symbol name. The address of every symbol is stored in a simple hash keyed on just the first character of the symbol.
+
+Strings, unlike symbols, are stored along with the other dynamically allocated objects, and use the second tetra to store the address of their string of ascii byte codes. Furthermore, unlike symbols, the length of the string is stored in the header. For mutable strings (the default) another pair of memory areas of equal size is used to store these strings of ascii byte codes. When the active string storage area becomes full, the garbage collector copies in-use string data to the other string storage area (which then becomes the active one). Otherwise the garbage collector leaves these string storage areas untouched. The ascii data for immutable strings (produced by symbol->string) are always ignored by the garbage collector.
+
+Vectors are stored as consecutive pairs (but the first tetra of the first pair is the vector type header.) The length of the vector is stored in the header. This and all other objects which require more than an octa of storage simply store the address of a scheme object in the second tetra and set the low bit in the high byte of the low wyde of their type to indicate to the garbage collector that this address in the second tetra must be followed just as if it were the cdr of a pair.
+
+Procedures store their starting address in the second tetra.
+
+Number types are distinguished by the high byte of the low wyde, which increases as the complexity of the type of number ascends the numeric tower. Integers simply store their 32 bit unsigned value in the second tetra. But integers requiring more than 32 bits for their absolute value store their length (in tetras) in the high 14 bits of their type tetra (sign bit clear), and the address of their data (just like string storage) in the second tetra. Rationals are stored as a pair of integers, thus the low bit in the high byte of the low wyde of their type is set so that the garbage collector will copy the pair. Inexactness of a number is indicated by setting the lowest bit of the high wyde of the number's type. Note, however, that all internal representations of numbers are exact (no floating point numbers are used), and so inexactness is given only as an auxiliary property of the number.
+
+Input ports use the low byte of the high wyde of the type field to store the last character read by the (peek) procedure. The second tetra for both input and output ports holds the file descriptor associated with the port. The ports returned by (current-input-port) and (current-output-port) are stored internally for efficiency's sake; they therefore must be treated by the garbage collector as if they were registers (and hence saved on the scheme stack before garbage collection begins and restored afterward).
+
+Closures are initially stored simply as scheme along with the enclosing environment. But as soon as the closure is applied, it is compiled to machine code. This machine code is not relocatable, and hence a different garbage collection strategy is employed for this memory area. The garbage collector maintains a list of start addresses of machine code of active closures, and at the beginning of each machine code block is stored a pointer to the address immediately following the end of the machine code for that closure. Using this information, the largest free space is identified, and compilation of new closures occurs sequentially here until this space is filled. At this point the garbage collector is invoked again, the largest space identified, and the process repeats. This garbage collection process for machine code may be invoked from scheme with (sys-gc-lambda), which returns #t if a free space was found larger than the one that had been in use immediately prior.
+
+The Stack
+=========
+
+The scheme object stack is maintained as a scheme list (dynamically allocated as pairs). The garbage collector, when it runs, begins at the root of this scheme list. Hence when garbage collection commences, only the registers and the current input and output ports need be saved on this scheme object stack and restored afterward to insure that all reachable objects are retained throughout the garbage collection process. The native x86 stack (pointed to by the ESP register) is used for the flow of continuation control. Consequently when call-with-current-continuation is invoked, this native stack is copied to a scheme list with each address represented as an Integer.
+
+Scheme Registers
+================
+
+The registers denoted by EXP, ENV, UNEV, ARGL, VAL, and FREE in Structure and Interpretation of Computer Programs are implemented by the machine registers EDX, EBP, ESI, EDI, EAX, and EBX respectively. The registers EXP, ENV, UNEV, ARGL, and VAL must point to a valid scheme object (or be zero) when the garbage collector is invoked. Likewise, the garbage collector registers OLD, NEW, and SCAN are implemented by the machine registers ESI, EDI, and EAX respectively.
+
+
+License
+=======
+
 This program is distributed under the terms of the GNU General Public License.
 Copyright (C) 2009 David Joseph Stith
--------------------------------------------------------------------------------
-This is a scheme interpreter implemented in x86 machine language.
+Copyright (C) 2010 treeform
+
+
+Thanks
+======
+
 Many thanks to Abelson and Sussman for Structure and Interpretation of Computer
 Programs from which the basic algorithms for the core of the interpreter and
 its stop-and-copy garbage collector are derived.
 Many thanks also to Chuck Moore whose ColorForth provided inspiration and
 floppy controller code.
--------------------------------------------------------------------------------
+
+
+Other stuff
+===========
+
 All essential syntax and procedures from R4RS are implemented.
 Integers have 32 bit magnitude (with sign stored separately).
 Real and complex numbers are still in the works. (Use at your own risk!)
