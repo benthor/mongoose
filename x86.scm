@@ -3,10 +3,6 @@
 ;;; Not all x86 instructions are yet implemented,                           ;;;
 ;;; But enough are implemented to compile the Dream Scheme Interpreter. :-) ;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;;This program is distributed under the terms of the       ;;;
-;;;GNU General Public License.                              ;;;
-;;;Copyright (C) 2010 David Joseph Stith                    ;;;
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (define x86-assembler-environment (scheme-report-environment 4))
 (for-each (lambda (x) (eval x x86-assembler-environment))
   `((define & ,&) (define ~ ,~) (define error ,error)))

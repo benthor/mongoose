@@ -2,10 +2,6 @@
 ;;;This is a scheme interpreter written in x86 assembly     ;;;
 ;;;thanks to the description given by Abelson and Sussman in;;;
 ;;;Structure and Interpretation of Computer Programs.       ;;;
-;;;                                                         ;;;
-;;;This program is distributed under the terms of the       ;;;
-;;;GNU General Public License.                              ;;;
-;;;Copyright (C) 2010 David Joseph Stith                    ;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (load "x86.scm")
 (define WINDOWS #f)
